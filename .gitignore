@@ -1,0 +1,7 @@
+data/
+processed/
+*.npy
+*.csv
+__pycache__/
+.venv/
+.DS_Store
