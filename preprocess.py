@@ -82,6 +82,13 @@ def clean_tweet_text(text: str) -> str:
     return text
 
 
+def clean_tweet(text: str) -> str:
+    """
+    Backwards-compatible alias used by the test suite.
+    """
+    return clean_tweet_text(text)
+
+
 def _ensure_nltk_resources() -> None:
     """
     Ensure NLTK tokenizers and stopwords are available.
