@@ -1,5 +1,6 @@
 data/
 processed/
+results/
 *.npy
 *.csv
 __pycache__/

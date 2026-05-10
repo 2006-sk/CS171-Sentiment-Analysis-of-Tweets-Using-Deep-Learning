@@ -4,8 +4,14 @@ from typing import Any
 
 import tensorflow as tf
 from tensorflow.keras import Model
-from tensorflow.keras.layers import (LSTM, Bidirectional, Dense, Dropout, Embedding,
-                                     Input)
+from tensorflow.keras.layers import (
+    LSTM,
+    Bidirectional,
+    Dense,
+    Dropout,
+    Embedding,
+    Input,
+)
 from tensorflow.keras.optimizers import Adam
 
 
@@ -28,7 +34,9 @@ def build_lstm_model(
     Embedding → LSTM(128) → Dropout(0.3) → Dense(64, relu) → Dense(num_classes, softmax)
     """
     inputs = Input(shape=(max_len,), dtype="int32")
-    x = Embedding(input_dim=vocab_size, output_dim=embed_dim, input_length=max_len)(inputs)
+    x = Embedding(input_dim=vocab_size, output_dim=embed_dim, input_length=max_len)(
+        inputs
+    )
     x = LSTM(128)(x)
     x = Dropout(0.3)(x)
     x = Dense(64, activation="relu")(x)
@@ -46,7 +54,9 @@ def build_bilstm_model(
     Embedding → Bidirectional LSTM(128) → Dropout(0.3) → Dense(64, relu) → Dense(num_classes, softmax)
     """
     inputs = Input(shape=(max_len,), dtype="int32")
-    x = Embedding(input_dim=vocab_size, output_dim=embed_dim, input_length=max_len)(inputs)
+    x = Embedding(input_dim=vocab_size, output_dim=embed_dim, input_length=max_len)(
+        inputs
+    )
     x = Bidirectional(LSTM(128))(x)
     x = Dropout(0.3)(x)
     x = Dense(64, activation="relu")(x)
@@ -101,4 +111,3 @@ def get_model(name: str, **kwargs: Any) -> Model:
     if key == "bert":
         return build_bert_model(**kwargs)
     raise ValueError('Unknown model name. Use "lstm", "bilstm", or "bert".')
-
