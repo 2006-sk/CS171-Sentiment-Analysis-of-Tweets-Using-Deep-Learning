@@ -144,3 +144,27 @@ def test_add_emotion_column():
     assert "emotion" in out.columns
     assert out["emotion"].notna().sum() == 3
 
+
+def test_embedding_matrix_shape():
+    path = os.path.join(PROCESSED_DIR, "embedding_matrix.npy")
+    assert os.path.exists(path)
+    m = np.load(path)
+    assert m.shape == (20000, 100)
+
+
+def test_lstm_with_glove():
+    from model import get_model
+
+    m = get_model("lstm", embedding_matrix=np.zeros((20000, 100)))
+    assert hasattr(m, "predict")
+    assert m.output_shape == (None, 3)
+
+
+def test_bert_tokenizer_output():
+    from evaluate import tokenize_for_bert
+
+    out = tokenize_for_bert(["great tweet", "bad day"], max_len=50)
+    assert set(out.keys()) == {"input_ids", "attention_mask"}
+    assert out["input_ids"].shape == (2, 50)
+    assert out["attention_mask"].shape == (2, 50)
+

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
+import numpy as np
 import tensorflow as tf
 from tensorflow.keras import Model
 from tensorflow.keras.layers import (
@@ -29,14 +30,25 @@ def build_lstm_model(
     embed_dim: int = 128,
     max_len: int = 50,
     num_classes: int = 3,
+    embedding_matrix: Optional[np.ndarray] = None,
 ) -> Model:
     """
     Embedding → LSTM(128) → Dropout(0.3) → Dense(64, relu) → Dense(num_classes, softmax)
+    If embedding_matrix is provided, Embedding is frozen with GloVe (100-d).
     """
+    if embedding_matrix is not None:
+        embed_dim = int(embedding_matrix.shape[1])
+        emb = Embedding(
+            input_dim=vocab_size,
+            output_dim=embed_dim,
+            weights=[embedding_matrix],
+            trainable=False,
+        )
+    else:
+        emb = Embedding(input_dim=vocab_size, output_dim=embed_dim)
+
     inputs = Input(shape=(max_len,), dtype="int32")
-    x = Embedding(input_dim=vocab_size, output_dim=embed_dim, input_length=max_len)(
-        inputs
-    )
+    x = emb(inputs)
     x = LSTM(128)(x)
     x = Dropout(0.3)(x)
     x = Dense(64, activation="relu")(x)
@@ -49,14 +61,25 @@ def build_bilstm_model(
     embed_dim: int = 128,
     max_len: int = 50,
     num_classes: int = 3,
+    embedding_matrix: Optional[np.ndarray] = None,
 ) -> Model:
     """
     Embedding → Bidirectional LSTM(128) → Dropout(0.3) → Dense(64, relu) → Dense(num_classes, softmax)
+    If embedding_matrix is provided, Embedding is frozen with GloVe (100-d).
     """
+    if embedding_matrix is not None:
+        embed_dim = int(embedding_matrix.shape[1])
+        emb = Embedding(
+            input_dim=vocab_size,
+            output_dim=embed_dim,
+            weights=[embedding_matrix],
+            trainable=False,
+        )
+    else:
+        emb = Embedding(input_dim=vocab_size, output_dim=embed_dim)
+
     inputs = Input(shape=(max_len,), dtype="int32")
-    x = Embedding(input_dim=vocab_size, output_dim=embed_dim, input_length=max_len)(
-        inputs
-    )
+    x = emb(inputs)
     x = Bidirectional(LSTM(128))(x)
     x = Dropout(0.3)(x)
     x = Dense(64, activation="relu")(x)
@@ -98,16 +121,21 @@ def build_bert_model(num_classes: int = 3) -> Model:
     return _compile(model)
 
 
-def get_model(name: str, **kwargs: Any) -> Model:
+def get_model(
+    name: str,
+    embedding_matrix: Optional[np.ndarray] = None,
+    **kwargs: Any,
+) -> Model:
     """
     Factory to build sentiment models.
     name: "lstm", "bilstm", or "bert"
+    embedding_matrix: optional frozen GloVe weights for lstm/bilstm only.
     """
     key = name.lower().strip()
     if key == "lstm":
-        return build_lstm_model(**kwargs)
+        return build_lstm_model(embedding_matrix=embedding_matrix, **kwargs)
     if key == "bilstm":
-        return build_bilstm_model(**kwargs)
+        return build_bilstm_model(embedding_matrix=embedding_matrix, **kwargs)
     if key == "bert":
         return build_bert_model(**kwargs)
     raise ValueError('Unknown model name. Use "lstm", "bilstm", or "bert".')
