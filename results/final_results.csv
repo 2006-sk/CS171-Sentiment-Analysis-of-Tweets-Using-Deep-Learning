@@ -1,0 +1,31 @@
+model,test_accuracy,test_precision_weighted,test_f1_weighted,classification_report
+lstm,0.6663027656477438,0.6713385188193048,0.6675522076355984,"              precision    recall  f1-score   support
+
+    Negative       0.68      0.66      0.67       778
+     Neutral       0.61      0.67      0.64      1112
+    Positive       0.75      0.67      0.70       858
+
+    accuracy                           0.67      2748
+   macro avg       0.68      0.67      0.67      2748
+weighted avg       0.67      0.67      0.67      2748
+"
+bilstm,0.6790393013100436,0.6837295926842428,0.6800942183960416,"              precision    recall  f1-score   support
+
+    Negative       0.69      0.66      0.67       778
+     Neutral       0.62      0.69      0.65      1112
+    Positive       0.76      0.69      0.72       858
+
+    accuracy                           0.68      2748
+   macro avg       0.69      0.68      0.68      2748
+weighted avg       0.68      0.68      0.68      2748
+"
+bert,0.649071714597743,0.6653342071257187,0.6460126210558029,"              precision    recall  f1-score   support
+
+    Negative       0.57      0.82      0.67       778
+     Neutral       0.67      0.52      0.59      1111
+    Positive       0.74      0.66      0.70       858
+
+    accuracy                           0.65      2747
+   macro avg       0.66      0.67      0.65      2747
+weighted avg       0.67      0.65      0.65      2747
+"
