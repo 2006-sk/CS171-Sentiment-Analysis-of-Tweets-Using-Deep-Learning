@@ -174,6 +174,63 @@ def stratified_train_val_test_split(
     return X_train, X_val, X_test, y_train, y_val, y_test
 
 
+def stratified_train_val_test_indices(
+    y: np.ndarray,
+    train_size: float = 0.8,
+    val_size: float = 0.1,
+    test_size: float = 0.1,
+    random_state: int = 42,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Same stratification as stratified_train_val_test_split, but return row indices
+    so Keras tokenized lines and raw BERT texts stay aligned split-wise.
+    """
+    if not np.isclose(train_size + val_size + test_size, 1.0):
+        raise ValueError("train_size + val_size + test_size must sum to 1.0")
+
+    idx = np.arange(len(y), dtype=np.int64)
+    idx_train, idx_temp, _, y_temp = train_test_split(
+        idx,
+        y,
+        test_size=(1.0 - train_size),
+        stratify=y,
+        random_state=random_state,
+    )
+    rel_test_size = test_size / (val_size + test_size)
+    idx_val, idx_test, _, _ = train_test_split(
+        idx_temp,
+        y_temp,
+        test_size=rel_test_size,
+        stratify=y_temp,
+        random_state=random_state,
+    )
+    return idx_train, idx_val, idx_test
+
+
+def save_bert_text_csvs(
+    out_dir: str,
+    texts_bert: List[str],
+    y: np.ndarray,
+    idx_train: np.ndarray,
+    idx_val: np.ndarray,
+    idx_test: np.ndarray,
+) -> None:
+    """Train+val as bert_train.csv, held-out test as bert_test.csv (text, label ints)."""
+    os.makedirs(out_dir, exist_ok=True)
+    tr = [texts_bert[i] for i in idx_train]
+    va = [texts_bert[i] for i in idx_val]
+    te = [texts_bert[i] for i in idx_test]
+    y_tr = y[idx_train]
+    y_va = y[idx_val]
+    y_te = y[idx_test]
+    train_df = pd.DataFrame(
+        {"text": tr + va, "label": np.concatenate([y_tr, y_va]).astype(np.int64)}
+    )
+    test_df = pd.DataFrame({"text": te, "label": y_te.astype(np.int64)})
+    train_df.to_csv(os.path.join(out_dir, "bert_train.csv"), index=False)
+    test_df.to_csv(os.path.join(out_dir, "bert_test.csv"), index=False)
+
+
 def fit_tokenizer_on_train_and_pad(
     train_texts: List[str],
     val_texts: List[str],
@@ -252,14 +309,18 @@ def run_preprocessing(csv_path: str) -> Dict[str, Any]:
     df["clean_text"] = df["text"].map(clean_tweet_text)
 
     texts_for_keras = [tokenize_text(t) for t in df["clean_text"].tolist()]
+    texts_bert = df["clean_text"].tolist()
 
     # Encode sentiments
     y, label_encoder = encode_sentiments_with_label_encoder(df["sentiment"].tolist())
 
-    # Stratified split
-    X_train_txt, X_val_txt, X_test_txt, y_train, y_val, y_test = (
-        stratified_train_val_test_split(texts_for_keras, y)
-    )
+    idx_train, idx_val, idx_test = stratified_train_val_test_indices(y)
+    X_train_txt = [texts_for_keras[i] for i in idx_train]
+    X_val_txt = [texts_for_keras[i] for i in idx_val]
+    X_test_txt = [texts_for_keras[i] for i in idx_test]
+    y_train = y[idx_train]
+    y_val = y[idx_val]
+    y_test = y[idx_test]
 
     # Tokenizer + padding
     split_data_no_y, tokenizer = fit_tokenizer_on_train_and_pad(
@@ -291,6 +352,14 @@ def run_preprocessing(csv_path: str) -> Dict[str, Any]:
         y_test=split_data.y_test,
         tokenizer=tokenizer,
         label_encoder=label_encoder,
+    )
+    save_bert_text_csvs(
+        "processed",
+        texts_bert,
+        y,
+        idx_train,
+        idx_val,
+        idx_test,
     )
 
     return {

@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,6 +11,7 @@ from sklearn.metrics import (
     classification_report,
     confusion_matrix,
     f1_score,
+    precision_score,
 )
 from sklearn.model_selection import StratifiedKFold
 from sklearn.utils.class_weight import compute_class_weight
@@ -24,6 +25,9 @@ EPOCHS_SEQ = 10
 N_SPLITS = 3
 BATCH_SIZE = 64
 EARLY_STOP_PATIENCE = 3
+BERT_TOKEN_MAX_LEN = 50
+BERT_TRAIN_EPOCHS = 1
+BERT_BATCH_SIZE = 128
 
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
@@ -70,18 +74,41 @@ def plot_confusion_matrix(y_true, y_pred, model_name, label) -> None:
     plt.close()
 
 
-def plot_accuracy_loss_curve(history, model_name, fold) -> None:
-    fig, (ax_acc, ax_loss) = plt.subplots(1, 2, figsize=(10, 4))
+def _history_series(
+    history: Any,
+    train_keys: Tuple[str, ...],
+    val_keys: Tuple[str, ...],
+) -> Tuple[Optional[List[float]], Optional[List[float]]]:
+    h = history.history
+    train = next((h[k] for k in train_keys if k in h), None)
+    val = next((h[k] for k in val_keys if k in h), None)
+    return train, val
 
-    ax_acc.plot(history.history["accuracy"], label="Train Accuracy")
-    ax_acc.plot(history.history["val_accuracy"], label="Val Accuracy")
+
+def plot_accuracy_loss_curve(history, model_name, fold) -> None:
+    acc_t, acc_v = _history_series(
+        history,
+        ("accuracy", "sparse_categorical_accuracy"),
+        ("val_accuracy", "val_sparse_categorical_accuracy"),
+    )
+    loss_t, loss_v = _history_series(history, ("loss",), ("val_loss",))
+    if not any(x is not None for x in (acc_t, acc_v, loss_t, loss_v)):
+        return
+
+    fig, (ax_acc, ax_loss) = plt.subplots(1, 2, figsize=(10, 4))
+    if acc_t is not None:
+        ax_acc.plot(acc_t, label="Train Accuracy")
+    if acc_v is not None:
+        ax_acc.plot(acc_v, label="Val Accuracy")
     ax_acc.set_title("Accuracy")
     ax_acc.set_xlabel("Epoch")
     ax_acc.set_ylabel("Accuracy")
     ax_acc.legend()
 
-    ax_loss.plot(history.history["loss"], label="Train Loss")
-    ax_loss.plot(history.history["val_loss"], label="Val Loss")
+    if loss_t is not None:
+        ax_loss.plot(loss_t, label="Train Loss")
+    if loss_v is not None:
+        ax_loss.plot(loss_v, label="Val Loss")
     ax_loss.set_title("Loss")
     ax_loss.set_xlabel("Epoch")
     ax_loss.set_ylabel("Loss")
@@ -91,6 +118,29 @@ def plot_accuracy_loss_curve(history, model_name, fold) -> None:
     plt.tight_layout()
     filename = f"{RESULTS_DIR}/{model_name}_fold_{fold}_accuracy_loss_curve.png"
     plt.savefig(filename)
+    plt.close()
+
+
+def plot_test_metrics_bar(model_name: str, acc: float, prec: float, f1: float) -> None:
+    labels = ["Accuracy", "Precision", "Weighted F1"]
+    values = [acc, prec, f1]
+    colors = ["#4C72B0", "#55A868", "#C44E52"]
+    fig, ax = plt.subplots(figsize=(6, 4))
+    bars = ax.bar(labels, values, color=colors, edgecolor="black", linewidth=0.6)
+    ax.set_ylim(0, 1.05)
+    ax.set_ylabel("Score")
+    ax.set_title(f"{model_name} - test set metrics")
+    for bar, v in zip(bars, values):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.02,
+            f"{v:.3f}",
+            ha="center",
+            va="bottom",
+            fontsize=10,
+        )
+    plt.tight_layout()
+    plt.savefig(f"{RESULTS_DIR}/{model_name}_test_metrics_bar.png")
     plt.close()
 
 
@@ -113,7 +163,7 @@ def evaluate_sequence_model(
     epochs: int,
     model_name: str,
     fold: int,
-) -> Tuple[float, float, np.ndarray, Any]:
+) -> Tuple[float, float, float, np.ndarray, Any]:
     class_weight_dict = sequence_class_weights(Y_train)
     history = model.fit(
         X_train,
@@ -129,7 +179,8 @@ def evaluate_sequence_model(
     preds = np.argmax(preds_prob, axis=1)
     acc = accuracy_score(y_val, preds)
     f1 = f1_score(y_val, preds, average="weighted")
-    return acc, f1, preds, history
+    prec = precision_score(y_val, preds, average="weighted", zero_division=0)
+    return acc, f1, prec, preds, history
 
 
 def cross_validate_sequence_model(
@@ -148,7 +199,7 @@ def cross_validate_sequence_model(
 
         model = get_model(model_name)
 
-        acc, f1, preds, history = evaluate_sequence_model(
+        acc, f1, prec, preds, history = evaluate_sequence_model(
             model,
             X_train,
             y_train,
@@ -164,6 +215,7 @@ def cross_validate_sequence_model(
                 "model": model_name,
                 "fold": fold,
                 "accuracy": acc,
+                "precision": prec,
                 "f1_score": f1,
             }
         )
@@ -171,6 +223,7 @@ def cross_validate_sequence_model(
         plot_confusion_matrix(y_val, preds, model_name, f"fold_{fold}")
         plot_accuracy_loss_curve(history, model_name, fold)
         print(f"Fold {fold} Accuracy: {acc:.4f}")
+        print(f"Fold {fold} Precision: {prec:.4f}")
         print(f"Fold {fold} F1: {f1:.4f}")
         tf.keras.backend.clear_session()
 
@@ -201,18 +254,101 @@ def final_test_sequence(
     preds = np.argmax(preds_prob, axis=1)
     acc = accuracy_score(y_test, preds)
     f1 = f1_score(y_test, preds, average="weighted")
+    prec = precision_score(y_test, preds, average="weighted", zero_division=0)
     report = classification_report(
         y_test,
         preds,
         target_names=["Negative", "Neutral", "Positive"],
     )
     plot_confusion_matrix(y_test, preds, model_name, "test")
+    plot_test_metrics_bar(model_name, acc, prec, f1)
     print(f"TEST Accuracy: {acc:.4f}")
+    print(f"TEST Precision: {prec:.4f}")
     print(f"TEST F1: {f1:.4f}")
     tf.keras.backend.clear_session()
     return {
         "model": model_name,
         "test_accuracy": acc,
+        "test_precision_weighted": prec,
+        "test_f1_weighted": f1,
+        "classification_report": report,
+    }
+
+
+def _load_bert_label_csv(path: str) -> Tuple[List[str], List[int]]:
+    df = pd.read_csv(path)
+    df = df.dropna(subset=["text", "label"])
+    df["text"] = df["text"].astype(str)
+    df["label"] = df["label"].astype(int)
+    return df["text"].tolist(), df["label"].tolist()
+
+
+def final_test_evaluation_bert() -> Dict[str, Any]:
+    """
+    DistilBERT on processed/bert_train.csv vs processed/bert_test.csv (from preprocess).
+    """
+    print("\nRunning FINAL TEST evaluation for bert...")
+    from transformers import AutoTokenizer
+
+    model = get_model("bert")
+    tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
+
+    train_texts, train_labels = _load_bert_label_csv("processed/bert_train.csv")
+    test_texts, test_labels = _load_bert_label_csv("processed/bert_test.csv")
+
+    train_enc = tokenizer(
+        train_texts,
+        padding=True,
+        truncation=True,
+        max_length=BERT_TOKEN_MAX_LEN,
+        return_tensors="np",
+    )
+    test_enc = tokenizer(
+        test_texts,
+        padding=True,
+        truncation=True,
+        max_length=BERT_TOKEN_MAX_LEN,
+        return_tensors="np",
+    )
+    X_train = {
+        "input_ids": np.asarray(train_enc["input_ids"], dtype=np.int32),
+        "attention_mask": np.asarray(train_enc["attention_mask"], dtype=np.int32),
+    }
+    X_test = {
+        "input_ids": np.asarray(test_enc["input_ids"], dtype=np.int32),
+        "attention_mask": np.asarray(test_enc["attention_mask"], dtype=np.int32),
+    }
+    y_train = np.asarray(train_labels, dtype=np.int32)
+    y_test_arr = np.asarray(test_labels, dtype=np.int32)
+
+    model.fit(
+        X_train,
+        y_train,
+        epochs=BERT_TRAIN_EPOCHS,
+        batch_size=BERT_BATCH_SIZE,
+        verbose=0,
+    )
+    preds_prob = model.predict(X_test, verbose=0)
+    preds = np.argmax(preds_prob, axis=1)
+
+    acc = accuracy_score(y_test_arr, preds)
+    f1 = f1_score(y_test_arr, preds, average="weighted")
+    prec = precision_score(y_test_arr, preds, average="weighted", zero_division=0)
+    report = classification_report(
+        y_test_arr,
+        preds,
+        target_names=["Negative", "Neutral", "Positive"],
+    )
+    plot_confusion_matrix(y_test_arr, preds, "bert", "test")
+    plot_test_metrics_bar("bert", acc, prec, f1)
+    print(f"TEST Accuracy: {acc:.4f}")
+    print(f"TEST Precision: {prec:.4f}")
+    print(f"TEST F1: {f1:.4f}")
+    tf.keras.backend.clear_session()
+    return {
+        "model": "bert",
+        "test_accuracy": acc,
+        "test_precision_weighted": prec,
         "test_f1_weighted": f1,
         "classification_report": report,
     }
@@ -233,6 +369,8 @@ def save_summary_csv(all_results: List[Dict[str, Any]]) -> None:
                 "model": model_name,
                 "accuracy_mean": g["accuracy"].mean(),
                 "accuracy_std": g["accuracy"].std(),
+                "precision_mean": g["precision"].mean(),
+                "precision_std": g["precision"].std(),
                 "f1_score_mean": g["f1_score"].mean(),
                 "f1_score_std": g["f1_score"].std(),
             }
@@ -290,6 +428,15 @@ def main() -> None:
             y_test,
         ),
     ]
+    if os.path.isfile("processed/bert_train.csv") and os.path.isfile(
+        "processed/bert_test.csv"
+    ):
+        final_rows.append(final_test_evaluation_bert())
+    else:
+        print(
+            "\nSkipping BERT: processed/bert_train.csv or processed/bert_test.csv missing "
+            "(run preprocess.py to generate)."
+        )
     save_final_results_csv(final_rows)
     print("\nEvaluation complete.")
 

@@ -78,33 +78,32 @@ def build_bilstm_model(
     return model
 
 
-def build_bert_model(num_classes: int = 3, max_len: int = 30) -> Any:
+def build_bert_model(num_classes: int = 3, max_len: int = 30, **_: Any) -> Any:
     """
-    Frozen DistilBERT as feature extractor (not used by current evaluate.py pipeline).
+    DistilBERT sequence classifier (frozen encoder). Uses tf_keras so Transformers
+    accepts symbolic tensors. max_len is accepted for API compatibility with get_model.
     """
     import tf_keras as keras
-    from transformers import TFDistilBertModel
+    from transformers import TFAutoModelForSequenceClassification
 
-    input_ids = keras.Input(shape=(max_len,), dtype=tf.int32, name="input_ids")
-    attention_mask = keras.Input(shape=(max_len,), dtype=tf.int32, name="attention_mask")
-
-    distilbert = TFDistilBertModel.from_pretrained(
+    bert = TFAutoModelForSequenceClassification.from_pretrained(
         "distilbert-base-uncased",
+        num_labels=num_classes,
         use_safetensors=False,
     )
-    distilbert.trainable = False
+    if hasattr(bert, "distilbert"):
+        bert.distilbert.trainable = False
+    else:
+        bert.trainable = False
 
-    bert_output = distilbert(
-        input_ids, attention_mask=attention_mask
-    ).last_hidden_state[:, 0, :]
-    x = keras.layers.Dense(64, activation="relu")(bert_output)
-    x = keras.layers.Dropout(0.3)(x)
-    output = keras.layers.Dense(num_classes, activation="softmax")(x)
-
+    input_ids = keras.Input(shape=(None,), dtype=tf.int32, name="input_ids")
+    attention_mask = keras.Input(shape=(None,), dtype=tf.int32, name="attention_mask")
+    logits = bert(input_ids=input_ids, attention_mask=attention_mask).logits
+    probs = keras.layers.Softmax(name="softmax")(logits)
     model = keras.Model(
         inputs={"input_ids": input_ids, "attention_mask": attention_mask},
-        outputs=output,
-        name="distilbert_feature_extractor",
+        outputs=probs,
+        name="distilbert_sentiment",
     )
     model.compile(
         optimizer=keras.optimizers.Adam(1e-3),

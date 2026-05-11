@@ -5,3 +5,4 @@ tensorflow
 nltk
 matplotlib
 transformers
+tf-keras
