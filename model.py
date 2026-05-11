@@ -4,133 +4,121 @@ from typing import Any, Optional
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras import Model
 from tensorflow.keras.layers import (
     LSTM,
     Bidirectional,
     Dense,
     Dropout,
     Embedding,
-    Input,
 )
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.models import Model
 
 
-def _compile(model: Model) -> Model:
+def build_lstm_model(
+    vocab_size: int = 20000,
+    embed_dim: int = 128,
+    max_len: int = 30,
+    num_classes: int = 3,
+    embedding_matrix: Optional[np.ndarray] = None,
+) -> Model:
+    inputs = tf.keras.Input(shape=(max_len,), dtype="int32")
+    if embedding_matrix is not None:
+        x = Embedding(
+            vocab_size,
+            embedding_matrix.shape[1],
+            weights=[embedding_matrix],
+            trainable=True,
+        )(inputs)
+    else:
+        x = Embedding(vocab_size, embed_dim, trainable=True)(inputs)
+    x = Dropout(0.3)(x)
+    x = LSTM(128, return_sequences=True)(x)
+    x = LSTM(64)(x)
+    x = Dense(64, activation="relu")(x)
+    x = Dropout(0.3)(x)
+    output = Dense(num_classes, activation="softmax")(x)
+    model = Model(inputs, output, name="lstm_sentiment")
     model.compile(
-        optimizer=Adam(1e-3),
+        optimizer=tf.keras.optimizers.Adam(1e-3),
         loss="sparse_categorical_crossentropy",
         metrics=["accuracy"],
     )
     return model
 
 
-def build_lstm_model(
-    vocab_size: int = 20000,
-    embed_dim: int = 128,
-    max_len: int = 50,
-    num_classes: int = 3,
-    embedding_matrix: Optional[np.ndarray] = None,
-) -> Model:
-    """
-    Embedding → LSTM(128) → Dropout(0.3) → Dense(64, relu) → Dense(num_classes, softmax)
-    If embedding_matrix is provided, Embedding is frozen with GloVe (100-d).
-    """
-    if embedding_matrix is not None:
-        embed_dim = int(embedding_matrix.shape[1])
-        emb = Embedding(
-            input_dim=vocab_size,
-            output_dim=embed_dim,
-            weights=[embedding_matrix],
-            trainable=False,
-        )
-    else:
-        emb = Embedding(input_dim=vocab_size, output_dim=embed_dim)
-
-    inputs = Input(shape=(max_len,), dtype="int32")
-    x = emb(inputs)
-    x = LSTM(128)(x)
-    x = Dropout(0.3)(x)
-    x = Dense(64, activation="relu")(x)
-    outputs = Dense(num_classes, activation="softmax")(x)
-    return _compile(Model(inputs=inputs, outputs=outputs, name="lstm_sentiment"))
-
-
 def build_bilstm_model(
     vocab_size: int = 20000,
     embed_dim: int = 128,
-    max_len: int = 50,
+    max_len: int = 30,
     num_classes: int = 3,
     embedding_matrix: Optional[np.ndarray] = None,
 ) -> Model:
-    """
-    Embedding → Bidirectional LSTM(128) → Dropout(0.3) → Dense(64, relu) → Dense(num_classes, softmax)
-    If embedding_matrix is provided, Embedding is frozen with GloVe (100-d).
-    """
+    inputs = tf.keras.Input(shape=(max_len,), dtype="int32")
     if embedding_matrix is not None:
-        embed_dim = int(embedding_matrix.shape[1])
-        emb = Embedding(
-            input_dim=vocab_size,
-            output_dim=embed_dim,
+        x = Embedding(
+            vocab_size,
+            embedding_matrix.shape[1],
             weights=[embedding_matrix],
-            trainable=False,
-        )
+            trainable=True,
+        )(inputs)
     else:
-        emb = Embedding(input_dim=vocab_size, output_dim=embed_dim)
-
-    inputs = Input(shape=(max_len,), dtype="int32")
-    x = emb(inputs)
-    x = Bidirectional(LSTM(128))(x)
+        x = Embedding(vocab_size, embed_dim, trainable=True)(inputs)
     x = Dropout(0.3)(x)
+    x = Bidirectional(LSTM(128, return_sequences=True))(x)
+    x = LSTM(64)(x)
     x = Dense(64, activation="relu")(x)
-    outputs = Dense(num_classes, activation="softmax")(x)
-    return _compile(Model(inputs=inputs, outputs=outputs, name="bilstm_sentiment"))
+    x = Dropout(0.3)(x)
+    output = Dense(num_classes, activation="softmax")(x)
+    model = Model(inputs, output, name="bilstm_sentiment")
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(1e-3),
+        loss="sparse_categorical_crossentropy",
+        metrics=["accuracy"],
+    )
+    return model
 
 
-def build_bert_model(num_classes: int = 3) -> Model:
+def build_bert_model(num_classes: int = 3, max_len: int = 30) -> Any:
     """
-    DistilBERT sentiment classifier using HuggingFace transformers.
-    - loads distilbert-base-uncased using TFAutoModelForSequenceClassification
-    - freezes base weights
-    - adds a softmax on top of logits
+    Frozen DistilBERT as feature extractor (not used by current evaluate.py pipeline).
     """
-    from transformers import TFAutoModelForSequenceClassification
+    import tf_keras as keras
+    from transformers import TFDistilBertModel
 
-    bert = TFAutoModelForSequenceClassification.from_pretrained(
+    input_ids = keras.Input(shape=(max_len,), dtype=tf.int32, name="input_ids")
+    attention_mask = keras.Input(shape=(max_len,), dtype=tf.int32, name="attention_mask")
+
+    distilbert = TFDistilBertModel.from_pretrained(
         "distilbert-base-uncased",
-        num_labels=num_classes,
+        use_safetensors=False,
     )
+    distilbert.trainable = False
 
-    # Freeze base encoder weights, keep classification head trainable.
-    if hasattr(bert, "distilbert"):
-        bert.distilbert.trainable = False
-    else:
-        bert.trainable = False
+    bert_output = distilbert(
+        input_ids, attention_mask=attention_mask
+    ).last_hidden_state[:, 0, :]
+    x = keras.layers.Dense(64, activation="relu")(bert_output)
+    x = keras.layers.Dropout(0.3)(x)
+    output = keras.layers.Dense(num_classes, activation="softmax")(x)
 
-    input_ids = Input(shape=(None,), dtype=tf.int32, name="input_ids")
-    attention_mask = Input(shape=(None,), dtype=tf.int32, name="attention_mask")
-
-    logits = bert({"input_ids": input_ids, "attention_mask": attention_mask}).logits
-    probs = tf.keras.layers.Softmax(name="softmax")(logits)
-
-    model = Model(
+    model = keras.Model(
         inputs={"input_ids": input_ids, "attention_mask": attention_mask},
-        outputs=probs,
-        name="distilbert_sentiment",
+        outputs=output,
+        name="distilbert_feature_extractor",
     )
-    return _compile(model)
+    model.compile(
+        optimizer=keras.optimizers.Adam(1e-3),
+        loss="sparse_categorical_crossentropy",
+        metrics=["accuracy"],
+    )
+    return model
 
 
 def get_model(
     name: str,
     embedding_matrix: Optional[np.ndarray] = None,
     **kwargs: Any,
-) -> Model:
-    """
-    Factory to build sentiment models.
-    name: "lstm", "bilstm", or "bert"
-    embedding_matrix: optional frozen GloVe weights for lstm/bilstm only.
-    """
+) -> Any:
     key = name.lower().strip()
     if key == "lstm":
         return build_lstm_model(embedding_matrix=embedding_matrix, **kwargs)

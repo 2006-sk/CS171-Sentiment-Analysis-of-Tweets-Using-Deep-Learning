@@ -31,9 +31,9 @@ def test_array_shapes():
     y_val = np.load(os.path.join(PROCESSED_DIR, "y_val.npy"))
     y_test = np.load(os.path.join(PROCESSED_DIR, "y_test.npy"))
 
-    assert X_train.ndim == 2 and X_train.shape[1] == 50
-    assert X_val.ndim == 2 and X_val.shape[1] == 50
-    assert X_test.ndim == 2 and X_test.shape[1] == 50
+    assert X_train.ndim == 2 and X_train.shape[1] == 30
+    assert X_val.ndim == 2 and X_val.shape[1] == 30
+    assert X_test.ndim == 2 and X_test.shape[1] == 30
 
     assert y_train.ndim == 1 and y_train.shape[0] == X_train.shape[0]
     assert y_val.ndim == 1 and y_val.shape[0] == X_val.shape[0]
@@ -163,8 +163,8 @@ def test_lstm_with_glove():
 def test_bert_tokenizer_output():
     from evaluate import tokenize_for_bert
 
-    out = tokenize_for_bert(["great tweet", "bad day"], max_len=50)
+    out = tokenize_for_bert(["great tweet", "bad day"], max_len=30)
     assert set(out.keys()) == {"input_ids", "attention_mask"}
-    assert out["input_ids"].shape == (2, 50)
-    assert out["attention_mask"].shape == (2, 50)
+    assert out["input_ids"].shape == (2, 30)
+    assert out["attention_mask"].shape == (2, 30)
 

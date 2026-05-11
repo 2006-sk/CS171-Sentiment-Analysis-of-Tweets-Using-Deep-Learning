@@ -1,7 +1,7 @@
+import html
 import json
 import os
 import re
-import string
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
@@ -12,6 +12,7 @@ from sklearn.preprocessing import LabelEncoder
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.preprocessing.text import Tokenizer
 
+MAX_LEN = 30
 
 # -----------------------------
 # Step 1: Data Preprocessing
@@ -52,32 +53,58 @@ def drop_nulls_and_duplicates(df: pd.DataFrame) -> pd.DataFrame:
 
 def clean_tweet_text(text: str) -> str:
     """
-    Clean tweet text:
-    - remove URLs
-    - remove @mentions
-    - strip '#' from hashtags (keep the word)
-    - remove punctuation/special characters
-    - lowercase
+    Clean tweet text: HTML unescape, URLs/mentions/hashtags, expand contractions,
+    then strip non-alphanumeric (after contractions so apostrophes are handled).
     """
     if not isinstance(text, str):
         return ""
 
+    text = html.unescape(text)
+    text = re.sub(r"http\S+|www\.\S+", "", text)
+    text = re.sub(r"@\w+", "", text)
+    text = re.sub(r"#(\w+)", r"\1", text)
+
     text = text.lower()
+    contractions = {
+        "don't": "do not",
+        "can't": "cannot",
+        "won't": "will not",
+        "it's": "it is",
+        "i'm": "i am",
+        "i've": "i have",
+        "i'll": "i will",
+        "i'd": "i would",
+        "you're": "you are",
+        "you've": "you have",
+        "you'll": "you will",
+        "you'd": "you would",
+        "he's": "he is",
+        "she's": "she is",
+        "that's": "that is",
+        "there's": "there is",
+        "they're": "they are",
+        "they've": "they have",
+        "they'll": "they will",
+        "we're": "we are",
+        "we've": "we have",
+        "we'll": "we will",
+        "isn't": "is not",
+        "aren't": "are not",
+        "wasn't": "was not",
+        "weren't": "were not",
+        "hasn't": "has not",
+        "haven't": "have not",
+        "hadn't": "had not",
+        "wouldn't": "would not",
+        "couldn't": "could not",
+        "shouldn't": "should not",
+        "didn't": "did not",
+        "doesn't": "does not",
+    }
+    for contraction, expansion in contractions.items():
+        text = text.replace(contraction, expansion)
 
-    # Remove URLs
-    text = re.sub(r"http\S+|www\.\S+", " ", text)
-
-    # Remove @mentions
-    text = re.sub(r"@\w+", " ", text)
-
-    # Strip '#' but keep hashtag content
-    text = text.replace("#", "")
-
-    # Remove punctuation and special characters (keep letters/numbers/whitespace)
-    text = re.sub(rf"[{re.escape(string.punctuation)}]", " ", text)
-    text = re.sub(r"[^a-z0-9\s]", " ", text)
-
-    # Collapse extra whitespace
+    text = re.sub(r"[^a-z0-9\s]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
@@ -89,69 +116,14 @@ def clean_tweet(text: str) -> str:
     return clean_tweet_text(text)
 
 
-def _ensure_nltk_resources() -> None:
+def tokenize_text(text: str) -> str:
     """
-    Ensure NLTK tokenizers and stopwords are available.
+    Regex tokenization: lowercase words of 2+ letters only (no NLTK, no downloads).
     """
-    import nltk
-
-    # punkt is needed for word_tokenize; newer NLTK sometimes needs punkt_tab too.
-    for resource in ["punkt", "stopwords", "punkt_tab"]:
-        try:
-            nltk.data.find(
-                "tokenizers/punkt" if resource.startswith("punkt") else f"corpora/{resource}"
-            )
-        except LookupError:
-            try:
-                nltk.download(resource, quiet=True)
-            except Exception:
-                # Some environments (e.g., locked-down SSL certs) may block downloads.
-                # We'll fall back to tokenizers/stopwords that don't require downloads.
-                return
-
-
-def tokenize_and_remove_stopwords(texts: List[str]) -> List[List[str]]:
-    """
-    Tokenize with NLTK word_tokenize and remove English stopwords.
-    """
-    _ensure_nltk_resources()
-
-    # Prefer NLTK's stopwords if available; otherwise fall back to sklearn's list.
-    try:
-        from nltk.corpus import stopwords  # type: ignore
-
-        stop_words = set(stopwords.words("english"))
-    except Exception:
-        from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
-
-        stop_words = set(ENGLISH_STOP_WORDS)
-
-    # Prefer word_tokenize (requires punkt). If runtime resources are missing (common
-    # in environments that can't download NLTK data), fall back to TweetTokenizer.
-    from nltk.tokenize import TweetTokenizer  # type: ignore
-
-    tt = TweetTokenizer(preserve_case=False, strip_handles=True, reduce_len=True)
-
-    try:
-        from nltk.tokenize import word_tokenize  # type: ignore
-
-        def tokenize_fn(s: str) -> List[str]:
-            try:
-                return word_tokenize(s)
-            except LookupError:
-                return tt.tokenize(s)
-
-    except Exception:
-
-        def tokenize_fn(s: str) -> List[str]:
-            return tt.tokenize(s)
-
-    tokenized: List[List[str]] = []
-    for t in texts:
-        tokens = tokenize_fn(t)
-        tokens = [tok for tok in tokens if tok not in stop_words and tok.strip()]
-        tokenized.append(tokens)
-    return tokenized
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    tokens = re.findall(r"\b[a-z][a-z]+\b", text)
+    return " ".join(tokens)
 
 
 def encode_sentiments_with_label_encoder(
@@ -208,7 +180,7 @@ def fit_tokenizer_on_train_and_pad(
     test_texts: List[str],
     vocab_size: int = 20000,
     oov_token: str = "<OOV>",
-    maxlen: int = 50,
+    maxlen: int = MAX_LEN,
 ) -> Tuple[SplitData, Tokenizer]:
     """
     Fit a Keras Tokenizer on train only, then pad all splits to maxlen.
@@ -279,9 +251,7 @@ def run_preprocessing(csv_path: str) -> Dict[str, Any]:
 
     df["clean_text"] = df["text"].map(clean_tweet_text)
 
-    # Tokenize + stopword removal (NLTK)
-    tokens = tokenize_and_remove_stopwords(df["clean_text"].tolist())
-    texts_for_keras = [" ".join(toks) for toks in tokens]
+    texts_for_keras = [tokenize_text(t) for t in df["clean_text"].tolist()]
 
     # Encode sentiments
     y, label_encoder = encode_sentiments_with_label_encoder(df["sentiment"].tolist())
@@ -298,7 +268,7 @@ def run_preprocessing(csv_path: str) -> Dict[str, Any]:
         X_test_txt,
         vocab_size=20000,
         oov_token="<OOV>",
-        maxlen=50,
+        maxlen=MAX_LEN,
     )
 
     split_data = SplitData(
