@@ -11,8 +11,11 @@ from sklearn.metrics import (
     ConfusionMatrixDisplay,
 )
 
-from model import get_model
 import tensorflow as tf
+from model import get_model
+from transformers import AutoTokenizer
+
+tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
 
 RESULTS_DIR = "results"
 os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -46,12 +49,12 @@ def plot_accuracy_loss_curve(history, model_name, fold):
     plt.plot(history.history["accuracy"], label="Train Accuracy")
     plt.plot(history.history["val_accuracy"], label="Validation Accuracy")
 
-    plt.plot(history.history["loss"], label="Train Accuracy")
-    plt.plot(history.history["val_loss"], label="Validation Accuracy")
+    plt.plot(history.history["loss"], label="Train Loss")
+    plt.plot(history.history["val_loss"], label="Validation Loss")
 
     plt.title(f"{model_name} - Fold {fold} Accuracy/Loss Curve")
     plt.xlabel("Epoch")
-    plt.ylabel("Accuracy")
+    plt.ylabel("Accuracy/Loss")
     plt.legend()
     plt.tight_layout()
 
@@ -154,6 +157,81 @@ def final_test_evaluation(model_name, X_train, y_train, X_test, y_test):
     }
 
 
+def final_test_evaluation_bert():
+    print(f"\nRunning FINAL TEST evaluation for bert...")
+
+    model = get_model("bert")
+
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
+
+    train_texts, train_labels = load_csv("processed/bert_train.csv")
+
+    test_texts, test_labels = load_csv("processed/bert_test.csv")
+
+    train_encodings = tokenizer(
+        train_texts,
+        padding=True,
+        truncation=True,
+        max_length=50,
+        return_tensors="np",
+    )
+
+    test_encodings = tokenizer(
+        test_texts,
+        padding=True,
+        truncation=True,
+        max_length=50,
+        return_tensors="np",
+    )
+
+    X_train = {
+        "input_ids": np.array(train_encodings["input_ids"]),
+        "attention_mask": np.array(train_encodings["attention_mask"]),
+    }
+
+    X_test = {
+        "input_ids": np.array(test_encodings["input_ids"]),
+        "attention_mask": np.array(test_encodings["attention_mask"]),
+    }
+
+    y_train = np.array(train_labels, dtype=np.int32)
+    y_test = np.array(test_labels, dtype=np.int32)
+
+    model.fit(
+        X_train,
+        y_train,
+        epochs=5,
+        batch_size=32,
+        verbose=0,
+    )
+
+    preds_prob = model.predict(
+        X_test,
+        verbose=0,
+    )
+
+    y_test = test_labels
+    preds = np.argmax(preds_prob, axis=1)
+
+    acc = accuracy_score(y_test, preds)
+    f1 = f1_score(y_test, preds, average="weighted")
+
+    plot_confusion_matrix(y_test, preds, "bert", "test")
+
+    print(f"TEST Accuracy: {acc:.4f}")
+    print(f"TEST F1: {f1:.4f}")
+
+    return {
+        "model": "bert",
+        "stage": "test",
+        "fold": "NA",
+        "accuracy": acc,
+        "f1_score": f1,
+    }
+
+
 def save_results_csv(all_results):
     df = pd.DataFrame(all_results)
 
@@ -162,12 +240,27 @@ def save_results_csv(all_results):
 
     # Also save aggregated summary
     summary = df.groupby("model")[["accuracy", "f1_score"]].agg(["mean", "std"])
+    cv_summary = df.groupby("model")["f1_score"].mean()
     summary.to_csv(f"{RESULTS_DIR}/model_metrics_summary.csv")
 
     print(f"\nSaved results to {file_path}")
 
-    best_model = summary["f1_score"].idxmax()
+    best_model = cv_summary.idxmax()
+    best_model = str(best_model).strip()
     return best_model
+
+
+def load_csv(path):
+    df = pd.read_csv(path)
+
+    # drop NaNs in BOTH columns
+    df = df.dropna(subset=["text", "label"])
+
+    # ensure correct types
+    df["text"] = df["text"].astype(str)
+    df["label"] = df["label"].astype(int)
+
+    return df["text"].tolist(), df["label"].tolist()
 
 
 def main():
@@ -184,22 +277,19 @@ def main():
     all_results = []
     best_model = ""
     for model_name in models:
-        print(f"\n==============================")
         print(f"Evaluating {model_name}")
-        print(f"==============================")
 
-        # CV results
         cv_results = cross_validate_model(X, y, model_name)
         all_results.extend(cv_results)
 
-    best_model = save_results_csv(all_results)
+        best_model = save_results_csv(all_results)
 
-    result = final_test_evaluation("bert", X, y, X_test, y_test)
-    df = pd.DataFrame(result)
+    result = final_test_evaluation_bert()
+    df = pd.DataFrame([result])
     df.to_csv(f"{RESULTS_DIR}/bert_final.csv", index=False)
 
     result = final_test_evaluation(best_model, X, y, X_test, y_test)
-    df = pd.DataFrame(result)
+    df = pd.DataFrame([result])
     df.to_csv(f"{RESULTS_DIR}/{best_model}_final.csv", index=False)
 
     print("\nEvaluation complete.")

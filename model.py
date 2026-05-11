@@ -3,16 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 import tensorflow as tf
-from tensorflow.keras import Model
-from tensorflow.keras.layers import (
-    LSTM,
-    Bidirectional,
-    Dense,
-    Dropout,
-    Embedding,
-    Input,
-)
-from tensorflow.keras.optimizers import Adam
+
+Model = tf.keras.Model
+LSTM = tf.keras.layers.LSTM
+Bidirectional = tf.keras.layers.Bidirectional
+Dense = tf.keras.layers.Dense
+Dropout = tf.keras.layers.Dropout
+Embedding = tf.keras.layers.Embedding
+Input = tf.keras.layers.Input
+Adam = tf.keras.optimizers.Adam
 
 
 def _compile(model: Model) -> Model:

@@ -12,7 +12,6 @@ from sklearn.preprocessing import LabelEncoder
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.preprocessing.text import Tokenizer
 
-
 # -----------------------------
 # Step 1: Data Preprocessing
 # -----------------------------
@@ -99,7 +98,9 @@ def _ensure_nltk_resources() -> None:
     for resource in ["punkt", "stopwords", "punkt_tab"]:
         try:
             nltk.data.find(
-                "tokenizers/punkt" if resource.startswith("punkt") else f"corpora/{resource}"
+                "tokenizers/punkt"
+                if resource.startswith("punkt")
+                else f"corpora/{resource}"
             )
         except LookupError:
             try:
@@ -269,6 +270,44 @@ def save_outputs(
         json.dump(label_classes, f, ensure_ascii=False, indent=2)
 
 
+def save_raw_text_for_bert(
+    out_dir: str,
+    train_texts: List[str],
+    val_texts: List[str],
+    test_texts: List[str],
+    y_train: np.ndarray,
+    y_val: np.ndarray,
+    y_test: np.ndarray,
+) -> None:
+    """
+    Save clean raw text files for BERT (no tokenization, no padding).
+    This is required for HuggingFace tokenizers later.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+
+    def save_csv(path: str, texts: List[str], labels: np.ndarray) -> None:
+        df = pd.DataFrame({"label": labels, "text": texts})
+        df.to_csv(path, index=False, encoding="utf-8")
+
+    save_csv(
+        os.path.join(out_dir, "bert_train.csv"),
+        train_texts,
+        y_train,
+    )
+
+    save_csv(
+        os.path.join(out_dir, "bert_val.csv"),
+        val_texts,
+        y_val,
+    )
+
+    save_csv(
+        os.path.join(out_dir, "bert_test.csv"),
+        test_texts,
+        y_test,
+    )
+
+
 def run_preprocessing(csv_path: str) -> Dict[str, Any]:
     """
     Chain all preprocessing steps and return a dict with splits + tokenizer + label encoder.
@@ -278,6 +317,7 @@ def run_preprocessing(csv_path: str) -> Dict[str, Any]:
     df = drop_nulls_and_duplicates(df)
 
     df["clean_text"] = df["text"].map(clean_tweet_text)
+    raw_texts = df["text"].map(clean_tweet_text).tolist()
 
     # Tokenize + stopword removal (NLTK)
     tokens = tokenize_and_remove_stopwords(df["clean_text"].tolist())
@@ -299,6 +339,10 @@ def run_preprocessing(csv_path: str) -> Dict[str, Any]:
         vocab_size=20000,
         oov_token="<OOV>",
         maxlen=50,
+    )
+
+    X_train_txt, X_val_txt, X_test_txt, y_train, y_val, y_test = (
+        stratified_train_val_test_split(raw_texts, y)
     )
 
     split_data = SplitData(
@@ -323,6 +367,16 @@ def run_preprocessing(csv_path: str) -> Dict[str, Any]:
         label_encoder=label_encoder,
     )
 
+    save_raw_text_for_bert(
+        out_dir="processed",
+        train_texts=X_train_txt,
+        val_texts=X_val_txt,
+        test_texts=X_test_txt,
+        y_train=y_train,
+        y_val=y_val,
+        y_test=y_test,
+    )
+
     return {
         "X_train": split_data.X_train,
         "X_val": split_data.X_val,
@@ -341,6 +395,4 @@ if __name__ == "__main__":
     print(
         f"Shapes: X_train={outputs['X_train'].shape}, X_val={outputs['X_val'].shape}, X_test={outputs['X_test'].shape}"
     )
-    print(
-        f"Label classes (index order): {outputs['label_encoder'].classes_.tolist()}"
-    )
+    print(f"Label classes (index order): {outputs['label_encoder'].classes_.tolist()}")
